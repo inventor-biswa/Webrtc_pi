@@ -84,6 +84,17 @@ app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
 const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
 app.use(express.static(FRONTEND_DIR));
 
+// ─── Direct player route ─────────────────────────────────────
+// Serve player.html for any direct route like /pi-patient-01
+// Excludes API routes (which are matched above) and static files
+app.get('/:deviceId', (req, res) => {
+  // Ignore requests that look like files (e.g. .css, .js, .ico)
+  if (req.params.deviceId.includes('.')) {
+    return res.status(404).send('Not found');
+  }
+  res.sendFile(path.join(FRONTEND_DIR, 'player.html'));
+});
+
 const PORT = Number.parseInt(process.env.PORT, 10) || 5001;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  ✅ Backend listening on http://0.0.0.0:${PORT}`);

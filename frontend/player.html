@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Video Feed</title>
+  <style>
+    body, html {
+      margin: 0; 
+      padding: 0; 
+      width: 100%; 
+      height: 100%;
+      background-color: #000; 
+      overflow: hidden;
+      display: flex; 
+      align-items: center; 
+      justify-content: center;
+      color: white; 
+      font-family: sans-serif;
+    }
+    #video-container {
+      width: 100%; 
+      height: 100%;
+    }
+    video {
+      width: 100%; 
+      height: 100%; 
+      object-fit: contain; /* Keeps aspect ratio */
+    }
+    #loading {
+      position: absolute;
+      font-size: 1.2rem;
+      color: #888;
+    }
+    .spinner {
+      display: inline-block;
+      width: 20px; height: 20px;
+      border: 3px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      border-top-color: #fff;
+      animation: spin 1s ease-in-out infinite;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.js"></script>
+</head>
+<body>
+  <div id="loading"><span class="spinner"></span> Connecting to live feed...</div>
+  <div id="video-container"></div>
+
+  <script>
+    async function initPlayer() {
+      // Get device ID from the URL path (e.g., "/pi-patient-01" -> "pi-patient-01")
+      // We remove trailing slashes and the leading slash
+      const pathParts = window.location.pathname.split('/').filter(Boolean);
+      const deviceId = pathParts[pathParts.length - 1]; 
+      
+      if (!deviceId) {
+        document.getElementById('loading').innerText = "Error: No device ID in URL";
+        return;
+      }
+
+      try {
+        // 1. Get LiveKit WS URL from backend
+        const configRes = await fetch('/api/config');
+        if (!configRes.ok) throw new Error("Failed to load server config");
+        const { livekitUrl } = await configRes.json();
+
+        // 2. Get Viewer Token for this specific device
+        const tokenRes = await fetch(`/api/viewer/token?patientId=${deviceId}`);
+        if (!tokenRes.ok) throw new Error("Failed to get view token");
+        const { token } = await tokenRes.json();
+
+        // 3. Connect to LiveKit Room
+        const room = new LivekitClient.Room({
+          adaptiveStream: true,
+          dynacast: true,
+        });
+
+        // 4. Handle incoming video tracks
+        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+          if (track.kind === 'video') {
+            // Hide loading indicator
+            document.getElementById('loading').style.display = 'none';
+            
+            // Attach video track to DOM
+            const element = track.attach();
+            // Ensure autoplay works on most browsers
+            element.setAttribute('autoplay', 'true');
+            element.setAttribute('playsinline', 'true');
+            element.setAttribute('muted', 'true'); // Mute is often required to autoplay
+            
+            document.getElementById('video-container').appendChild(element);
+          }
+        });
+
+        room.on(LivekitClient.RoomEvent.Disconnected, () => {
+           document.getElementById('video-container').innerHTML = '';
+           document.getElementById('loading').style.display = 'block';
+           document.getElementById('loading').innerHTML = "Stream disconnected. Refresh to reconnect.";
+        });
+
+        await room.connect(livekitUrl, token);
+
+      } catch (err) {
+        console.error(err);
+        document.getElementById('loading').innerText = "Error: " + err.message;
+      }
+    }
+
+    initPlayer();
+  </script>
+</body>
+</html>
