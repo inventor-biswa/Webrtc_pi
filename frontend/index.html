@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiveStream Monitor — Pi Viewer</title>
+  <meta name="description" content="Real-time video monitoring dashboard for Raspberry Pi camera streams via LiveKit WebRTC." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+  <style>
+    /* ─── Reset & Tokens ──────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-base:      #07080f;
+      --bg-surface:   #0d1017;
+      --bg-card:      #111520;
+      --bg-hover:     #161c2a;
+      --border:       rgba(255,255,255,0.07);
+      --border-glow:  rgba(56,189,248,0.35);
+      --accent:       #38bdf8;
+      --accent-dim:   #0ea5e9;
+      --accent-glow:  rgba(56,189,248,0.15);
+      --green:        #22c55e;
+      --green-dim:    rgba(34,197,94,0.12);
+      --red:          #ef4444;
+      --red-dim:      rgba(239,68,68,0.12);
+      --yellow:       #f59e0b;
+      --text-primary: #f1f5f9;
+      --text-secondary:#94a3b8;
+      --text-muted:   #475569;
+      --radius-sm:    8px;
+      --radius-md:    14px;
+      --radius-lg:    20px;
+      --shadow-card:  0 4px 24px rgba(0,0,0,0.5);
+      --shadow-glow:  0 0 40px rgba(56,189,248,0.08);
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      overflow-x: hidden;
+    }
+
+    /* ─── Background grid ─────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::after {
+      content: '';
+      position: fixed;
+      top: -30%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 900px;
+      height: 500px;
+      background: radial-gradient(ellipse, rgba(56,189,248,0.06) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ─── Layout ─────────────────────────────────── */
+    .app { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; }
+
+    /* ─── Header ─────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 32px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(13,16,23,0.8);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-icon {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #0ea5e9, #6366f1);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 0 20px rgba(56,189,248,0.3);
+    }
+    .brand-name {
+      font-size: 18px; font-weight: 700;
+      background: linear-gradient(90deg, #f1f5f9, #94a3b8);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .status-badge {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 12.5px; font-weight: 500; color: var(--text-secondary);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 5px 13px;
+    }
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse-dot 2s infinite;
+    }
+    .status-dot.connecting { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); animation: none; }
+    .status-dot.offline    { background: var(--text-muted); box-shadow: none; animation: none; }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+    }
+
+    .refresh-btn {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      color: var(--text-secondary);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 7px 14px;
+      transition: all 0.2s;
+    }
+    .refresh-btn:hover { color: var(--accent); border-color: var(--border-glow); background: var(--bg-hover); }
+    .refresh-btn svg { transition: transform 0.4s; }
+    .refresh-btn.spinning svg { animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Main content ───────────────────────────── */
+    main {
+      flex: 1;
+      padding: 36px 32px;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* ─── Section header ─────────────────────────── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .section-title {
+      font-size: 22px; font-weight: 700; color: var(--text-primary);
+    }
+    .section-subtitle {
+      font-size: 13.5px; color: var(--text-muted); margin-top: 3px;
+    }
+    .room-count-badge {
+      font-size: 12px; font-weight: 600;
+      color: var(--accent);
+      background: var(--accent-glow);
+      border: 1px solid var(--border-glow);
+      border-radius: 20px;
+      padding: 4px 12px;
+    }
+
+    /* ─── Room grid ──────────────────────────────── */
+    .room-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+    }
+
+    /* ─── Room card ──────────────────────────────── */
+    .room-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 0;
+      overflow: hidden;
+      cursor: pointer;
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+      box-shadow: var(--shadow-card);
+      animation: card-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    .room-card:hover {
+      transform: translateY(-3px);
+      border-color: var(--border-glow);
+      box-shadow: var(--shadow-card), var(--shadow-glow);
+    }
+
+    @keyframes card-in {
+      from { opacity: 0; transform: translateY(12px) scale(0.97); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    .card-preview {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #080c14;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card-preview::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, rgba(56,189,248,0.04), transparent 70%);
+    }
+    .preview-icon {
+      font-size: 40px;
+      opacity: 0.25;
+      user-select: none;
+    }
+    .live-chip {
+      position: absolute;
+      top: 12px; left: 12px;
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+      color: #fff;
+      background: rgba(239,68,68,0.9);
+      border-radius: 6px;
+      padding: 4px 10px;
+    }
+    .live-chip::before {
+      content: '';
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #fff;
+      animation: pulse-dot 1s infinite;
+    }
+    .participant-chip {
+      position: absolute;
+      top: 12px; right: 12px;
+      font-size: 11px; font-weight: 600;
+      color: var(--text-secondary);
+      background: rgba(7,8,15,0.75);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 9px;
+    }
+
+    .card-body {
+      padding: 18px 20px 20px;
+    }
+    .card-device-id {
+      font-size: 15px; font-weight: 600;
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+      margin-bottom: 4px;
+    }
+    .card-room {
+      font-size: 12px; color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+      margin-bottom: 14px;
+    }
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-meta {
+      font-size: 12px; color: var(--text-muted);
+    }
+
+    .watch-btn {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 13px; font-weight: 600;
+      color: var(--bg-base);
+      background: var(--accent);
+      border: none; border-radius: var(--radius-sm);
+      padding: 8px 16px; cursor: pointer;
+      transition: background 0.2s, transform 0.15s;
+    }
+    .watch-btn:hover { background: #7dd3fc; transform: scale(1.04); }
+    .watch-btn:active { transform: scale(0.97); }
+
+    /* ─── Empty state ────────────────────────────── */
+    .empty-state {
+      grid-column: 1 / -1;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 80px 24px;
+      text-align: center;
+      animation: card-in 0.4s ease both;
+    }
+    .empty-icon {
+      font-size: 56px; margin-bottom: 20px; opacity: 0.4;
+    }
+    .empty-title {
+      font-size: 20px; font-weight: 600; color: var(--text-primary);
+      margin-bottom: 10px;
+    }
+    .empty-desc {
+      font-size: 14px; color: var(--text-muted); max-width: 420px; line-height: 1.7;
+    }
+    .empty-code {
+      margin-top: 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: var(--accent);
+      background: rgba(56,189,248,0.07);
+      border: 1px solid var(--border-glow);
+      border-radius: var(--radius-sm);
+      padding: 10px 20px;
+    }
+
+    /* ─── Viewer Modal ───────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(7,8,15,0.92);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      animation: fade-in 0.2s ease;
+    }
+    .modal-overlay.hidden { display: none; }
+
+    @keyframes fade-in {
+      from { opacity: 0; } to { opacity: 1; }
+    }
+
+    .modal {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 1100px;
+      max-height: 90vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.7), var(--shadow-glow);
+      animation: modal-in 0.25s cubic-bezier(0.34,1.2,0.64,1) both;
+    }
+    @keyframes modal-in {
+      from { opacity: 0; transform: scale(0.95) translateY(12px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    .modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-title {
+      font-size: 16px; font-weight: 600;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .modal-device-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px; color: var(--accent);
+      background: var(--accent-glow);
+      border: 1px solid var(--border-glow);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    .close-btn {
+      width: 34px; height: 34px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      border-radius: var(--radius-sm);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; font-size: 18px; color: var(--text-muted);
+      transition: all 0.2s;
+    }
+    .close-btn:hover { color: var(--text-primary); border-color: var(--border-glow); }
+
+    .modal-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #05060a;
+      min-height: 400px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #remote-video-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    #remote-video-container video {
+      width: 100%;
+      max-height: 65vh;
+      object-fit: contain;
+    }
+
+    .loading-state {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 14px;
+      color: var(--text-secondary);
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    .loading-label {
+      font-size: 14px; color: var(--text-muted);
+    }
+
+    .modal-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-surface);
+      font-size: 12.5px; color: var(--text-muted);
+    }
+    .conn-status {
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    /* ─── Toast ──────────────────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: 28px; right: 28px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 14px 20px;
+      font-size: 13.5px;
+      color: var(--text-primary);
+      box-shadow: var(--shadow-card);
+      z-index: 9999;
+      max-width: 320px;
+      display: flex; align-items: center; gap: 10px;
+      animation: toast-in 0.3s cubic-bezier(0.34,1.4,0.64,1);
+      transition: opacity 0.3s;
+    }
+    .toast.hide { opacity: 0; }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .toast-icon { font-size: 18px; }
+
+    /* ─── Responsive ─────────────────────────────── */
+    @media (max-width: 640px) {
+      header { padding: 14px 18px; }
+      main   { padding: 24px 16px; }
+      .room-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ─── Header ────────────────────────────────── -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">📡</div>
+      <span class="brand-name">LiveStream Monitor</span>
+    </div>
+    <div class="header-right">
+      <div class="status-badge">
+        <span class="status-dot connecting" id="backend-dot"></span>
+        <span id="backend-status-text">Connecting…</span>
+      </div>
+      <button class="refresh-btn" id="refresh-btn" onclick="refreshRooms()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+          <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+        </svg>
+        Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- ─── Main ──────────────────────────────────── -->
+  <main>
+    <div class="section-header">
+      <div>
+        <div class="section-title">Active Pi Streams</div>
+        <div class="section-subtitle">Click a stream card to watch live video</div>
+      </div>
+      <span class="room-count-badge" id="room-count">— online</span>
+    </div>
+    <div class="room-grid" id="room-grid"></div>
+  </main>
+
+  <!-- ─── Viewer Modal ──────────────────────────── -->
+  <div class="modal-overlay hidden" id="modal-overlay">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>📹 Viewing stream</span>
+          <span class="modal-device-badge" id="modal-device-label">—</span>
+        </div>
+        <button class="close-btn" id="close-btn" title="Close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="loading-state" class="loading-state">
+          <div class="spinner"></div>
+          <div class="loading-label" id="loading-label">Connecting to LiveKit…</div>
+        </div>
+        <div id="remote-video-container" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="conn-status">
+          <span class="status-dot connecting" id="conn-dot"></span>
+          <span id="conn-label">Connecting…</span>
+        </div>
+        <span id="stream-stats">—</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /.app -->
+
+<script>
+  // ─── State ────────────────────────────────────────────────
+  let livekitWsUrl = 'ws://localhost:7880';
+  let activeRoom   = null;
+  let pollTimer    = null;
+  let statsTimer   = null;
+
+  // ─── Init ──────────────────────────────────────────────────
+  async function init() {
+    try {
+      const cfg = await fetchJson('/api/config');
+      if (cfg.livekitUrl) livekitWsUrl = cfg.livekitUrl;
+    } catch (_) { /* use default */ }
+    setBackendStatus('online');
+    await refreshRooms();
+    pollTimer = setInterval(refreshRooms, 8000);
+  }
+
+  // ─── Fetch helpers ─────────────────────────────────────────
+  async function fetchJson(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+
+  // ─── Backend status ────────────────────────────────────────
+  function setBackendStatus(state) {
+    const dot  = document.getElementById('backend-dot');
+    const text = document.getElementById('backend-status-text');
+    dot.className = 'status-dot';
+    if (state === 'online')     { text.textContent = 'Backend online'; }
+    if (state === 'connecting') { dot.classList.add('connecting'); text.textContent = 'Connecting…'; }
+    if (state === 'offline')    { dot.classList.add('offline');    text.textContent = 'Backend offline'; }
+  }
+
+  // ─── Refresh rooms ─────────────────────────────────────────
+  async function refreshRooms() {
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('spinning');
+    try {
+      const rooms = await fetchJson('/api/rooms');
+      renderRooms(rooms);
+      setBackendStatus('online');
+    } catch (e) {
+      setBackendStatus('offline');
+      renderRooms([]);
+      showToast('⚠️ Cannot reach backend. Is it running on :5000?', 4000);
+    } finally {
+      btn.classList.remove('spinning');
+    }
+  }
+
+  // ─── Render room cards ─────────────────────────────────────
+  function renderRooms(rooms) {
+    const grid  = document.getElementById('room-grid');
+    const badge = document.getElementById('room-count');
+    const piRooms = rooms.filter(function(r) { return r.name.startsWith('room-'); });
+    badge.textContent = piRooms.length + ' online';
+    grid.innerHTML = '';
+
+    if (piRooms.length === 0) {
+      grid.innerHTML =
+        '<div class="empty-state">' +
+        '  <div class="empty-icon">📡</div>' +
+        '  <div class="empty-title">No active streams</div>' +
+        '  <div class="empty-desc">No Raspberry Pi devices are streaming right now.<br/>Start a Pi stream and it will appear here automatically.</div>' +
+        '  <div class="empty-code">bash start-stream.sh</div>' +
+        '</div>';
+      return;
+    }
+
+    piRooms.forEach(function(room, i) {
+      var card = createRoomCard(room, i);
+      grid.appendChild(card);
+    });
+  }
+
+  function createRoomCard(room, index) {
+    var created = room.creationTime
+      ? new Date(room.creationTime * 1000).toLocaleTimeString()
+      : '—';
+
+    var card = document.createElement('div');
+    card.className = 'room-card';
+    card.style.animationDelay = (index * 60) + 'ms';
+    card.innerHTML =
+      '<div class="card-preview">' +
+      '  <div class="preview-icon">🎥</div>' +
+      '  <div class="live-chip">LIVE</div>' +
+      '  <div class="participant-chip">👁 ' + room.numParticipants + '</div>' +
+      '</div>' +
+      '<div class="card-body">' +
+      '  <div class="card-device-id">' + esc(room.deviceId) + '</div>' +
+      '  <div class="card-room">room: ' + esc(room.name) + '</div>' +
+      '  <div class="card-footer">' +
+      '    <div class="card-meta">Since ' + created + '</div>' +
+      '    <button class="watch-btn">' +
+      '      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+      '      Watch' +
+      '    </button>' +
+      '  </div>' +
+      '</div>';
+
+    card.addEventListener('click', function() { openViewer(room.deviceId); });
+    return card;
+  }
+
+  // ─── Viewer Modal ──────────────────────────────────────────
+  async function openViewer(deviceId) {
+    document.getElementById('modal-overlay').classList.remove('hidden');
+    document.getElementById('modal-device-label').textContent = deviceId;
+    document.getElementById('remote-video-container').style.display = 'none';
+    document.getElementById('loading-state').style.display    = 'flex';
+    document.getElementById('loading-label').textContent = 'Fetching viewer token…';
+    setConnStatus('connecting', 'Connecting…');
+
+    if (activeRoom) { activeRoom.disconnect(); activeRoom = null; }
+    clearInterval(statsTimer);
+
+    try {
+      var data = await fetchJson('/api/viewer/token?patientId=' + encodeURIComponent(deviceId));
+      var token = data.token;
+      document.getElementById('loading-label').textContent = 'Joining LiveKit room…';
+
+      var room = new LivekitClient.Room({
+        adaptiveStream: true,
+        dynacast: true,
+      });
+      activeRoom = room;
+
+      room.on(LivekitClient.RoomEvent.TrackSubscribed, function(track) {
+        if (track.kind === LivekitClient.Track.Kind.Video) {
+          var container = document.getElementById('remote-video-container');
+          var el = track.attach();
+          container.innerHTML = '';
+          container.appendChild(el);
+          document.getElementById('loading-state').style.display = 'none';
+          container.style.display = 'flex';
+          setConnStatus('online', 'Streaming from ' + deviceId);
+          startStats(room);
+        }
+      });
+
+      room.on(LivekitClient.RoomEvent.TrackUnsubscribed, function(track) {
+        track.detach();
+        document.getElementById('remote-video-container').style.display = 'none';
+        document.getElementById('loading-state').style.display = 'flex';
+        document.getElementById('loading-label').textContent = 'Waiting for publisher…';
+        setConnStatus('connecting', 'Waiting for stream…');
+      });
+
+      room.on(LivekitClient.RoomEvent.Disconnected, function() {
+        setConnStatus('offline', 'Disconnected');
+        clearInterval(statsTimer);
+      });
+
+      await room.connect(livekitWsUrl, token);
+      setConnStatus('connecting', 'Waiting for video track…');
+
+      // Attach already-subscribed tracks if Pi already in room
+      room.remoteParticipants.forEach(function(participant) {
+        participant.trackPublications.forEach(function(pub) {
+          if (pub.track && pub.track.kind === LivekitClient.Track.Kind.Video) {
+            var container = document.getElementById('remote-video-container');
+            var el = pub.track.attach();
+            container.innerHTML = '';
+            container.appendChild(el);
+            document.getElementById('loading-state').style.display = 'none';
+            container.style.display = 'flex';
+            setConnStatus('online', 'Streaming from ' + deviceId);
+            startStats(room);
+          }
+        });
+      });
+
+    } catch (err) {
+      document.getElementById('loading-label').textContent = 'Error: ' + err.message;
+      setConnStatus('offline', 'Failed to connect');
+      showToast('❌ ' + err.message, 5000);
+    }
+  }
+
+  function closeModal() {
+    document.getElementById('modal-overlay').classList.add('hidden');
+    if (activeRoom) { activeRoom.disconnect(); activeRoom = null; }
+    clearInterval(statsTimer);
+    document.getElementById('remote-video-container').innerHTML = '';
+    document.getElementById('stream-stats').textContent = '—';
+  }
+
+  document.getElementById('modal-overlay').addEventListener('click', function(e) {
+    if (e.target === document.getElementById('modal-overlay')) closeModal();
+  });
+
+  // ─── Conn status ───────────────────────────────────────────
+  function setConnStatus(state, label) {
+    var dot = document.getElementById('conn-dot');
+    dot.className = 'status-dot';
+    if (state === 'connecting') dot.classList.add('connecting');
+    if (state === 'offline')    dot.classList.add('offline');
+    document.getElementById('conn-label').textContent = label;
+  }
+
+  // ─── Stats ────────────────────────────────────────────────
+  function startStats(room) {
+    clearInterval(statsTimer);
+    statsTimer = setInterval(function() {
+      document.getElementById('stream-stats').textContent =
+        room.remoteParticipants.size + ' publisher(s) connected';
+    }, 2000);
+  }
+
+  // ─── Toast ────────────────────────────────────────────────
+  function showToast(msg, duration) {
+    var existing = document.querySelector('.toast');
+    if (existing) existing.remove();
+    var t = document.createElement('div');
+    t.className = 'toast';
+    var parts = msg.split(' ');
+    t.innerHTML = '<span class="toast-icon">' + parts[0] + '</span><span>' + parts.slice(1).join(' ') + '</span>';
+    document.body.appendChild(t);
+    setTimeout(function() {
+      t.classList.add('hide');
+      setTimeout(function() { t.remove(); }, 350);
+    }, duration || 3000);
+  }
+
+  // ─── Utils ────────────────────────────────────────────────
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  // ─── Keyboard ────────────────────────────────────────────
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // ─── Boot ────────────────────────────────────────────────
+  init();
+</script>
+</body>
+</html>

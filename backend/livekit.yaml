@@ -1,0 +1,6 @@
+port: 7880
+rtc:
+  udp_port: 7882
+  use_external_ip: false
+keys:
+  devkey: "secret_secret_key_12345"
