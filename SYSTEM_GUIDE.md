@@ -363,6 +363,54 @@ Because when a doctor clicks "Watch" on the dashboard, they expect the video to 
 
 ---
 
+## 🤖 Autostarting on the Pi (Run on Boot)
+
+If the Pi loses power or restarts, you want the camera to start streaming automatically without you having to SSH in. We do this by creating a Linux `systemd` service.
+
+Run this entire block on your Raspberry Pi terminal (make sure to change the `DEVICE_ID` if setting up a second Pi):
+
+```bash
+sudo bash -c 'cat <<EOF > /etc/systemd/system/webrtc-stream.service
+[Unit]
+Description=LiveKit WebRTC Publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=test
+WorkingDirectory=/home/test/webrtc
+Environment="BACKEND_URL=https://vid1.clinohealthinnovation.com"
+Environment="LIVEKIT_URL=wss://livekit.clinohealthinnovation.com"
+Environment="DEVICE_ID=pi-patient-01"
+Environment="FPS=25"
+
+# Apply anti-flicker (50Hz) to the camera right before starting
+ExecStartPre=-/usr/bin/v4l2-ctl -d /dev/video0 --set-ctrl=power_line_frequency=1
+
+ExecStart=/usr/bin/python3 /home/test/webrtc/lk-publisher.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF'
+
+# Enable it to start on boot
+sudo systemctl daemon-reload
+sudo systemctl enable webrtc-stream
+
+# Start it right now
+sudo systemctl start webrtc-stream
+```
+
+### Useful Commands for the Pi Service
+- Check if it's running: `sudo systemctl status webrtc-stream`
+- View live logs: `sudo journalctl -u webrtc-stream -f`
+- Stop the stream: `sudo systemctl stop webrtc-stream`
+
+---
+
 ## 🖥️ How to Run (Mac — Local Testing)
 
 Open **2 terminal tabs** on Mac:
@@ -523,3 +571,29 @@ All these were attempted and failed before finding the working solution:
 (separate binary from `livekit-server`). We are using `livekit-server` directly.
 The Python SDK bypasses WHIP entirely by connecting via the same WebSocket
 protocol that browsers and the Go SDK use.
+
+---
+
+## 🔗 Integrating with Other Dashboards (API)
+
+Because the frontend is entirely decoupled from the video routing, you can easily embed the video feeds into **any other application** (like a React app, Laravel dashboard, or WordPress site) on a completely different server.
+
+### Option 1: Frontend Token Fetching (Easiest)
+You can copy the HTML/JavaScript from `frontend/player.html` into your other application. Your new frontend simply makes an HTTP request to your EC2 backend to grab the viewer token.
+
+```javascript
+// Fetch the viewer token from your EC2 API
+const response = await fetch("https://vid1.clinohealthinnovation.com/api/viewer/token?patientId=pi-patient-01");
+const { token } = await response.json();
+
+// Connect the LiveKit Video Player
+await room.connect("wss://livekit.clinohealthinnovation.com", token);
+```
+*(Note: CORS is already enabled on the EC2 backend to allow cross-domain requests).*
+
+### Option 2: Native Backend Integration (Most Secure)
+If your new dashboard has its own backend (e.g. where doctors log in securely), you don't need to fetch tokens from the EC2 Express API at all.
+
+1. Install the **LiveKit Server SDK** in your new backend (available for Node.js, Python, PHP, Go, Ruby, Java).
+2. Use your `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` to generate Viewer JWT tokens securely on your own server.
+3. Pass the generated token down to your frontend to connect directly to `wss://livekit.clinohealthinnovation.com`.
